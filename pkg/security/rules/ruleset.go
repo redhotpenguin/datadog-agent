@@ -7,9 +7,10 @@ package rules
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
-	"strings"
 
 	"github.com/DataDog/datadog-agent/pkg/security/secl/eval"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
@@ -64,16 +65,18 @@ type RuleSetListener interface {
 type Opts struct {
 	eval.Opts
 	SupportedDiscarders map[eval.Field]bool
+	ProctectedRuleID    []RuleID
 }
 
 // NewOptsWithParams initializes a new Opts instance with Debug and Constants parameters
-func NewOptsWithParams(constants map[string]interface{}, supportedDiscarders map[eval.Field]bool) *Opts {
+func NewOptsWithParams(constants map[string]interface{}, supportedDiscarders map[eval.Field]bool, protectedRuleIDs []RuleID) *Opts {
 	return &Opts{
 		Opts: eval.Opts{
 			Constants: constants,
 			Macros:    make(map[eval.MacroID]*eval.Macro),
 		},
 		SupportedDiscarders: supportedDiscarders,
+		ProctectedRuleID:    protectedRuleIDs,
 	}
 }
 
@@ -98,6 +101,11 @@ func (rs *RuleSet) ListRuleIDs() []RuleID {
 		ids = append(ids, ruleID)
 	}
 	return ids
+}
+
+// GetRules returns the active rules
+func (rs *RuleSet) GetRules() map[eval.RuleID]*eval.Rule {
+	return rs.rules
 }
 
 // ListMacroIDs returns the list of MacroIDs from the ruleset
@@ -131,7 +139,7 @@ func (rs *RuleSet) AddMacros(macros []*MacroDefinition) error {
 // AddMacro parses the macro AST and adds it to the list of macros of the ruleset
 func (rs *RuleSet) AddMacro(macroDef *MacroDefinition) (*eval.Macro, error) {
 	if _, exists := rs.opts.Macros[macroDef.ID]; exists {
-		return nil, fmt.Errorf("found multiple definition of the macro '%s'", macroDef.ID)
+		return nil, &ErrMacroLoad{Definition: macroDef, Err: errors.New("multiple definition with the same ID")}
 	}
 
 	macro := &eval.Macro{
@@ -140,11 +148,11 @@ func (rs *RuleSet) AddMacro(macroDef *MacroDefinition) (*eval.Macro, error) {
 	}
 
 	if err := macro.Parse(); err != nil {
-		return nil, errors.Wrapf(err, "couldn't generate an AST of the macro %s", macroDef.ID)
+		return nil, &ErrMacroLoad{Definition: macroDef, Err: errors.Wrap(err, "syntax error")}
 	}
 
 	if err := macro.GenEvaluator(rs.model, &rs.opts.Opts); err != nil {
-		return nil, errors.Wrapf(err, "couldn't generate an evaluation of the macro %s", macroDef.ID)
+		return nil, &ErrMacroLoad{Definition: macroDef, Err: errors.Wrap(err, "compilation error")}
 	}
 
 	rs.opts.Macros[macro.ID] = macro
@@ -153,26 +161,32 @@ func (rs *RuleSet) AddMacro(macroDef *MacroDefinition) (*eval.Macro, error) {
 }
 
 // AddRules adds rules to the ruleset and generate their partials
-func (rs *RuleSet) AddRules(rules []*RuleDefinition) error {
+func (rs *RuleSet) AddRules(rules []*RuleDefinition) *multierror.Error {
 	var result *multierror.Error
 
 	for _, ruleDef := range rules {
 		if _, err := rs.AddRule(ruleDef); err != nil {
-			result = multierror.Append(result, errors.Wrapf(err, "couldn't add rule %s to the ruleset", ruleDef.ID))
+			result = multierror.Append(result, err)
 		}
 	}
 
 	if err := rs.generatePartials(); err != nil {
-		result = multierror.Append(result, errors.Wrap(err, "couldn't generate partials"))
+		result = multierror.Append(result, errors.Wrapf(err, "couldn't generate partials for rule"))
 	}
 
-	return result.ErrorOrNil()
+	return result
 }
 
 // AddRule creates the rule evaluator and adds it to the bucket of its events
 func (rs *RuleSet) AddRule(ruleDef *RuleDefinition) (*eval.Rule, error) {
+	for _, id := range rs.opts.ProctectedRuleID {
+		if id == ruleDef.ID {
+			return nil, &ErrRuleLoad{Definition: ruleDef, Err: errors.New("internal rule ID conflict")}
+		}
+	}
+
 	if _, exists := rs.rules[ruleDef.ID]; exists {
-		return nil, fmt.Errorf("found multiple definition of the rule '%s'", ruleDef.ID)
+		return nil, &ErrRuleLoad{Definition: ruleDef, Err: errors.New("multiple definition with the same ID")}
 	}
 
 	var tags []string
@@ -190,11 +204,11 @@ func (rs *RuleSet) AddRule(ruleDef *RuleDefinition) (*eval.Rule, error) {
 	}
 
 	if err := rule.Parse(); err != nil {
-		return nil, err
+		return nil, &ErrRuleLoad{Definition: ruleDef, Err: errors.Wrap(err, "syntax error")}
 	}
 
 	if err := rule.GenEvaluator(rs.model, &rs.opts.Opts); err != nil {
-		return nil, err
+		return nil, &ErrRuleLoad{Definition: ruleDef, Err: err}
 	}
 
 	for _, event := range rule.GetEvaluator().EventTypes {
@@ -210,14 +224,12 @@ func (rs *RuleSet) AddRule(ruleDef *RuleDefinition) (*eval.Rule, error) {
 	}
 
 	if len(rule.GetEventTypes()) == 0 {
-		log.Errorf("rule without event specified: %s", ruleDef.Expression)
-		return nil, ErrRuleWithoutEvent
+		return nil, &ErrRuleLoad{Definition: ruleDef, Err: errors.New("no event in the rule definition")}
 	}
 
 	// TODO: this contraints could be removed, but currently approver resolution can't handle multiple event type approver
 	if len(rule.GetEventTypes()) > 1 {
-		log.Errorf("multiple event types specified on the same rule: %s", ruleDef.Expression)
-		return nil, ErrRuleWithMultipleEvents
+		return nil, &ErrRuleLoad{Definition: ruleDef, Err: errors.New("rule with multiple events is not supported")}
 	}
 
 	// Merge the fields of the new rule with the existing list of fields of the ruleset
