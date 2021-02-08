@@ -33,9 +33,10 @@ import (
 	admissionpkg "github.com/DataDog/datadog-agent/pkg/clusteragent/admission"
 	"github.com/DataDog/datadog-agent/pkg/clusteragent/admission/mutate"
 	"github.com/DataDog/datadog-agent/pkg/clusteragent/clusterchecks"
-	"github.com/DataDog/datadog-agent/pkg/clusteragent/orchestrator"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/forwarder"
+	orchcfg "github.com/DataDog/datadog-agent/pkg/orchestrator/config"
+	procapi "github.com/DataDog/datadog-agent/pkg/process/util/api"
 	"github.com/DataDog/datadog-agent/pkg/serializer"
 	"github.com/DataDog/datadog-agent/pkg/status/health"
 	"github.com/DataDog/datadog-agent/pkg/util"
@@ -93,9 +94,10 @@ metadata for their metrics.`,
 		},
 	}
 
-	confPath    string
-	flagNoColor bool
-	stopCh      chan struct{}
+	confPath              string
+	flagNoColor           bool
+	stopCh                chan struct{}
+	orchestratorForwarder forwarder.Forwarder
 )
 
 func init() {
@@ -179,6 +181,20 @@ func start(cmd *cobra.Command, args []string) error {
 	f.Start() //nolint:errcheck
 	s := serializer.NewSerializer(f)
 
+	// setup the orchestrator forwarder
+	if config.Datadog.GetBool("orchestrator_explorer.enabled") {
+		orchestratorCfg := orchcfg.NewDefaultOrchestratorConfig()
+		if err := orchestratorCfg.LoadYamlConfig(confPath); err != nil {
+			log.Errorf("Error loading the orchestrator config: %s", err)
+		}
+		keysPerDomain = procapi.KeysPerDomains(orchestratorCfg.OrchestratorEndpoints)
+		orchestratorForwarderOpts := forwarder.NewOptions(keysPerDomain)
+		orchestratorForwarderOpts.DisableAPIKeyChecking = true
+		orchestratorForwarder = forwarder.NewDefaultForwarder(orchestratorForwarderOpts)
+		orchestratorForwarder.Start()
+		s.AttachOrchestratorForwarder(orchestratorForwarder)
+	}
+
 	aggregatorInstance := aggregator.InitAggregator(s, hostname)
 	aggregatorInstance.AddAgentStartupTelemetry(fmt.Sprintf("%s - Datadog Cluster Agent", version.AgentVersion))
 
@@ -234,20 +250,20 @@ func start(cmd *cobra.Command, args []string) error {
 		}
 
 		// TODO: move rest of the controllers out of the apiserver package
-		orchestratorCtx := orchestrator.ControllerContext{
-			IsLeaderFunc:                 le.IsLeader,
-			UnassignedPodInformerFactory: apiCl.UnassignedPodInformerFactory,
-			InformerFactory:              apiCl.InformerFactory,
-			Client:                       apiCl.Cl,
-			StopCh:                       stopCh,
-			Hostname:                     hostname,
-			ClusterName:                  clusterName,
-			ConfigPath:                   confPath,
-		}
-		err = orchestrator.StartController(orchestratorCtx)
-		if err != nil {
-			log.Errorf("Could not start orchestrator controller: %v", err)
-		}
+		// orchestratorCtx := orchestrator.ControllerContext{
+		// 	IsLeaderFunc:                 le.IsLeader,
+		// 	UnassignedPodInformerFactory: apiCl.UnassignedPodInformerFactory,
+		// 	InformerFactory:              apiCl.InformerFactory,
+		// 	Client:                       apiCl.Cl,
+		// 	StopCh:                       stopCh,
+		// 	Hostname:                     hostname,
+		// 	ClusterName:                  clusterName,
+		// 	ConfigPath:                   confPath,
+		// }
+		// err = orchestrator.StartController(orchestratorCtx)
+		// if err != nil {
+		// 	log.Errorf("Could not start orchestrator controller: %v", err)
+		// }
 	} else {
 		log.Info("Orchestrator explorer is disabled")
 	}
@@ -365,6 +381,14 @@ func start(cmd *cobra.Command, args []string) error {
 
 	if stopCh != nil {
 		close(stopCh)
+	}
+
+	// stopping forwarders
+	if f != nil {
+		f.Stop()
+	}
+	if orchestratorForwarder != nil {
+		orchestratorForwarder.Stop()
 	}
 
 	log.Info("See ya!")
