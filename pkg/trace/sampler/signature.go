@@ -31,12 +31,14 @@ func sortHashes(hashes []spanHash)         { sort.Sort(spanHashSlice(hashes)) }
 // (env, service, name, is_error) of each span.
 func computeSignatureWithRootAndEnv(trace pb.Trace, root *pb.Span, env string) Signature {
 	rootHash := computeSpanHash(root, env, true)
+	if len(trace) == 1 {
+		return Signature(rootHash)
+	}
 	spanHashes := make([]spanHash, 0, len(trace))
 
 	for i := range trace {
 		spanHashes = append(spanHashes, computeSpanHash(trace[i], env, false))
 	}
-
 	// Now sort, dedupe then merge all the hashes to build the signature
 	sortHashes(spanHashes)
 

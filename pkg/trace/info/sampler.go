@@ -5,14 +5,10 @@
 
 package info
 
-import "github.com/DataDog/datadog-agent/pkg/trace/sampler"
-
 // SamplerInfo represents internal stats and state of a sampler
 type SamplerInfo struct {
 	// Stats contains statistics about what the sampler is doing.
 	Stats SamplerStats
-	// State is the internal state of the sampler (for debugging mostly)
-	State sampler.InternalState
 }
 
 // SamplerStats contains sampler statistics

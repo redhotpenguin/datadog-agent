@@ -7,10 +7,8 @@ package sampler
 
 import (
 	"testing"
-	"time"
 
 	"github.com/cihub/seelog"
-	"github.com/stretchr/testify/assert"
 )
 
 func getTestSampler() *Sampler {
@@ -34,27 +32,6 @@ func TestSamplerAccessRace(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 5000; i++ {
-		s.GetState()
 		s.GetAllCountScores()
-	}
-}
-
-func TestSamplerLoop(t *testing.T) {
-	s := getTestSampler()
-
-	exit := make(chan bool)
-
-	go func() {
-		s.Run()
-		close(exit)
-	}()
-
-	s.Stop()
-
-	select {
-	case <-exit:
-		return
-	case <-time.After(time.Second * 1):
-		assert.Fail(t, "Sampler took more than 1 second to close")
 	}
 }
