@@ -94,7 +94,7 @@ func checkPolicies(cmd *cobra.Command, args []string) error {
 		PIDCacheSize:        1,
 	}
 
-	opts := rules.NewOptsWithParams(model.SECLConstants, sprobe.SupportedDiscarders)
+	opts := rules.NewOptsWithParams(model.SECLConstants, sprobe.SupportedDiscarders, sprobe.AllCustomRuleIDs())
 	model := &sprobe.Model{}
 	ruleSet := rules.NewRuleSet(model, model.NewEvent, opts)
 

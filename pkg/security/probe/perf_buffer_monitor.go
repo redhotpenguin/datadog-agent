@@ -342,7 +342,6 @@ func (pbm *PerfBufferMonitor) sendEventsAndBytesReadStats(client *statsd.Client)
 func (pbm *PerfBufferMonitor) sendLostEventsReadStats(client *statsd.Client) error {
 	for m := range pbm.readLostEvents {
 		var total int64
-		perCPU := map[int]int64{}
 
 		for cpu := range pbm.readLostEvents[m] {
 			tags := []string{
@@ -355,12 +354,11 @@ func (pbm *PerfBufferMonitor) sendLostEventsReadStats(client *statsd.Client) err
 			}
 
 			total += count
-			perCPU[cpu] += count
 		}
 
 		if total > 0 {
 			pbm.probe.DispatchCustomEvent(
-				NewEventLostReadEvent(m, perCPU),
+				NewEventLostReadEvent(m, total),
 			)
 		}
 	}
@@ -378,9 +376,9 @@ func (pbm *PerfBufferMonitor) collectAndSendKernelStats(client *statsd.Client) e
 
 	// loop through the statistics buffers of each perf map
 	for perfMapName, statsMap := range pbm.perfBufferStatsMaps {
-		// total and perEventPerCPU are used for alerting
+		// total and perEvent are used for alerting
 		var total uint64
-		perEventPerCPU := map[string]map[int]uint64{}
+		perEvent := map[string]uint64{}
 
 		// loop through all the values of the active buffer
 		iterator = statsMap.Iterate()
@@ -398,9 +396,9 @@ func (pbm *PerfBufferMonitor) collectAndSendKernelStats(client *statsd.Client) e
 					return nil
 				}
 
-				// make sure perEventPerCPU is properly initialized
-				if _, ok := perEventPerCPU[evtType.String()]; !ok {
-					perEventPerCPU[evtType.String()] = map[int]uint64{}
+				// make sure perEvent is properly initialized
+				if _, ok := perEvent[evtType.String()]; !ok {
+					perEvent[evtType.String()] = 0
 				}
 
 				// prepare metrics tags
@@ -427,7 +425,7 @@ func (pbm *PerfBufferMonitor) collectAndSendKernelStats(client *statsd.Client) e
 					}
 				}
 				total += stats.Lost
-				perEventPerCPU[evtType.String()][cpu] += stats.Lost
+				perEvent[evtType.String()] += stats.Lost
 			}
 		}
 		if iterator.Err() != nil {
@@ -437,7 +435,7 @@ func (pbm *PerfBufferMonitor) collectAndSendKernelStats(client *statsd.Client) e
 		// send an alert if events were lost
 		if total > 0 {
 			pbm.probe.DispatchCustomEvent(
-				NewEventLostWriteEvent(perfMapName, perEventPerCPU),
+				NewEventLostWriteEvent(perfMapName, perEvent),
 			)
 		}
 	}
