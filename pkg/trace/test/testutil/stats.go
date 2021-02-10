@@ -15,29 +15,6 @@ var defaultAggregators = []string{"service", "resource"}
 
 const defaultEnv = "none"
 
-// TestBucket returns a fixed stats bucket to be used in unit tests
-func TestBucket() stats.Bucket {
-	srb := stats.NewRawBucket(0, 1e9)
-	srb.HandleSpan(TestWeightedSpan(), defaultEnv, nil, false)
-	sb := srb.Export()
-
-	// marshalling then unmarshalling data to:
-	// 1) make a deep copy which prevents unexpected side effects with
-	//    Counts and Distributions sharing the same TagSets
-	// 2) do thing closer to what they are, for real, in production
-	//    code as indeed, stats buckets are (un)marshalled
-	js, err := json.Marshal(sb)
-	if err != nil {
-		return stats.NewBucket(0, 1e9)
-	}
-	var sb2 stats.Bucket
-	err = json.Unmarshal(js, &sb2)
-	if err != nil {
-		return stats.NewBucket(0, 1e9)
-	}
-	return sb2
-}
-
 // BucketWithSpans returns a stats bucket populated with spans stats
 func BucketWithSpans(spans []*stats.WeightedSpan) stats.Bucket {
 	srb := stats.NewRawBucket(0, 1e9)
@@ -161,13 +138,3 @@ var TestDistroValues = []int64{
 	10327, 63265, 48904, 79260, 26562, 11528, 97745, 78918, 94479, 19453,
 }
 
-// TestDistribution returns a distribution with pre-defined values
-func TestDistribution() stats.Distribution {
-	tgs := stats.NewTagSetFromString("service:X,host:Z")
-	d := stats.NewDistribution("duration", "Y|duration|service:X,host:Z", "Y", tgs)
-	for i, v := range TestDistroValues {
-		d.Add(float64(v), uint64(i))
-	}
-
-	return d
-}

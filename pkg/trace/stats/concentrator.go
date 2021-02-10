@@ -35,7 +35,7 @@ type Concentrator struct {
 	bufferLen int
 
 	In  chan []Input
-	Out chan []Bucket
+	Out chan []pb.ClientStatsBucket
 
 	exit   chan struct{}
 	exitWG *sync.WaitGroup
@@ -45,7 +45,7 @@ type Concentrator struct {
 }
 
 // NewConcentrator initializes a new concentrator ready to be started
-func NewConcentrator(bsize int64, out chan []Bucket) *Concentrator {
+func NewConcentrator(bsize int64, out chan []pb.ClientStatsBucket) *Concentrator {
 	c := Concentrator{
 		bsize:   bsize,
 		buckets: make(map[int64]*RawBucket),
@@ -110,19 +110,10 @@ func (c *Concentrator) Stop() {
 	c.exitWG.Wait()
 }
 
-// SublayerMap maps spans to their sublayer values.
-type SublayerMap map[*pb.Span][]SublayerValue
-
 // Input contains input for the concentractor.
 type Input struct {
 	Trace     WeightedTrace
-	Sublayers SublayerMap
 	Env       string
-
-	// SublayersOnly reports whether stats computation and
-	// export should be disabled in buckets coming from this
-	// input.
-	SublayersOnly bool
 }
 
 // Add applies the given input to the concentrator.
@@ -151,22 +142,20 @@ func (c *Concentrator) addNow(i *Input) {
 
 		b, ok := c.buckets[btime]
 		if !ok {
-			b = NewRawBucket(btime, c.bsize)
+			b = NewRawBucket(uint64(btime), uint64(c.bsize))
 			c.buckets[btime] = b
 		}
-
-		subs, _ := i.Sublayers[s.Span]
-		b.HandleSpan(s, i.Env, subs, i.SublayersOnly)
+		b.HandleSpan(s, i.Env)
 	}
 }
 
 // Flush deletes and returns complete statistic buckets
-func (c *Concentrator) Flush() []Bucket {
+func (c *Concentrator) Flush() []pb.ClientStatsBucket {
 	return c.flushNow(time.Now().UnixNano())
 }
 
-func (c *Concentrator) flushNow(now int64) []Bucket {
-	var sb []Bucket
+func (c *Concentrator) flushNow(now int64) []pb.ClientStatsBucket {
+	var sb []pb.ClientStatsBucket
 
 	c.mu.Lock()
 	for ts, srb := range c.buckets {
