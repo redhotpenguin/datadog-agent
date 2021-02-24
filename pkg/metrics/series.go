@@ -141,7 +141,7 @@ func populateDeviceField(serie *Serie) {
 		return
 	}
 	// make a copy of the tags array. Otherwise the underlying array won't have
-	// the device tag for the Nth iteration (N>1), and the deice field will
+	// the device tag for the Nth iteration (N>1), and the device field will
 	// be lost
 	filteredTags := make([]string, 0, len(serie.Tags))
 
@@ -166,6 +166,72 @@ func hasDeviceTag(serie *Serie) bool {
 	return false
 }
 
+// podToHost, adapted shamelessly from populateDeviceField()
+// if a pod tax exists, replace the Host attribute with it
+// unless the metric matches `system.*`
+func podToHost(serie *Serie) {
+
+	// don't replace the host tag if this is a system tag, or no
+	// pod tag exists
+	if isSystemMetric(serie) || !hasPodTag(serie) {
+		return
+	}
+
+	// make a copy of the tags array.
+	filteredTags := make([]string, 0, len(serie.Tags))
+
+	for _, tag := range serie.Tags {
+		if strings.HasPrefix(tag, "pod:") {
+			serie.Host = tag[4:]
+		}
+		filteredTags = append(filteredTags, tag)
+	}
+
+	serie.Tags = filteredTags
+}
+
+// isSystemMetric checks whether the metric name matches `system.*`
+func isSystemMetric(serie *Serie) bool {
+	for _, tag := range serie.Tags {
+		if strings.HasPrefix(tag, "system.") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasPodTag checks whether a series contains a pod tag
+func hasPodTag(serie *Serie) bool {
+	for _, tag := range serie.Tags {
+		if strings.HasPrefix(tag, "pod:") {
+			return true
+		}
+	}
+	return false
+}
+
+// excludeTags removes any tags specified in the configuration file
+// based on populateDeviceField
+//FIXME(redhotpenguin) make it work - not sure this is needed
+// exclude_tags:
+//   - upper_bound
+func excludeTags(serie *Serie) {
+
+	var excludedTag = "upper_bound"
+
+	// init an empty array that assumes no tags excluded
+	filteredTags := make([]string, 0, len(serie.Tags))
+
+	for _, tag := range serie.Tags {
+		if strings.HasPrefix(tag, fmt.Sprintf("%s:", excludedTag)) {
+			// skip this tag
+		} else {
+			filteredTags = append(filteredTags, tag)
+		}
+	}
+	serie.Tags = filteredTags
+}
+
 // MarshalJSON serializes timeseries to JSON so it can be sent to V1 endpoints
 //FIXME(maxime): to be removed when v2 endpoints are available
 func (series Series) MarshalJSON() ([]byte, error) {
@@ -173,6 +239,7 @@ func (series Series) MarshalJSON() ([]byte, error) {
 	type SeriesAlias Series
 	for _, serie := range series {
 		populateDeviceField(serie)
+		podToHost(serie)
 	}
 
 	data := map[string][]*Serie{
@@ -283,6 +350,7 @@ func (series Series) WriteItem(stream *jsoniter.Stream, i int) error {
 	}
 	serie := series[i]
 	populateDeviceField(serie)
+	podToHost(serie)
 	encodeSerie(serie, stream)
 	return stream.Flush()
 }

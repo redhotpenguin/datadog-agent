@@ -266,7 +266,7 @@ func TestSubmitV1Intake(t *testing.T) {
 // between every components of the forwarder. Corner cases and error are tested
 // per component.
 func TestForwarderEndtoEnd(t *testing.T) {
-	// reseting DroppedOnInput
+	// resetting DroppedOnInput
 	transactionsDroppedOnInput.Set(0)
 
 	requests := int64(0)

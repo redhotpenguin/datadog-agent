@@ -98,6 +98,45 @@ func TestPopulateDeviceField(t *testing.T) {
 	}
 }
 
+func TestPodToHost(t *testing.T) {
+	for _, tc := range []struct {
+		Tags         []string
+		ExpectedTags []string
+		ExpectedHost string
+	}{
+		{
+			[]string{"some:tag", "pod:pod123"},
+			[]string{"some:tag", "pod:pod123"},
+			"pod123",
+		},
+		{
+			[]string{"some:tag", "pod:pod123", "some_other:tag"},
+			[]string{"some:tag", "pod:pod123", "some_other:tag"},
+			"pod123",
+		},
+		{
+			[]string{"yet_another:value", "one_last:tag_value", "long:array", "very_long:array", "many:tags", "such:wow"},
+			[]string{"yet_another:value", "one_last:tag_value", "long:array", "very_long:array", "many:tags", "such:wow"},
+			"",
+		},
+	} {
+		t.Run(fmt.Sprintf(""), func(t *testing.T) {
+			s := &Serie{Tags: []string{}}
+			for _, t := range tc.Tags {
+				s.Tags = append(s.Tags, t)
+			}
+
+			// Run a few times to ensure stability
+			for i := 0; i < 4; i++ {
+				podToHost(s)
+				assert.Equal(t, tc.ExpectedTags, s.Tags)
+				assert.Equal(t, tc.ExpectedHost, s.Host)
+			}
+
+		})
+	}
+}
+
 func TestMarshalJSONSeries(t *testing.T) {
 	series := Series{{
 		Points: []Point{
